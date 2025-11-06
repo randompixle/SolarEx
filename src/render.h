@@ -1,4 +1,5 @@
 #pragma once
+#include "re_sdl.h"
 #include "html.h"
 #include "net.h"
 #include "font.h"

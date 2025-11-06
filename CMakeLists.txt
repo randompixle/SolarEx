@@ -16,8 +16,7 @@ if (SDL2_FOUND)
   include_directories(${SDL2_INCLUDE_DIRS})
   link_directories(${SDL2_LIBRARY_DIRS})
 else()
-  message(WARNING "pkg-config SDL2 not found; using fallback")
-  include_directories(/usr/include/SDL2)
+  message(WARNING "pkg-config SDL2 not found; using stub implementation")
 endif()
 
 if (CURL_FOUND)
@@ -33,13 +32,14 @@ add_executable(ReExploreXP
         src/html.c
         src/net.c
         src/font.c
-        src/stb_impl.c
 )
+
+if (NOT SDL2_FOUND)
+  target_sources(ReExploreXP PRIVATE src/sdl_stub.c)
+endif()
 
 if (SDL2_FOUND)
   target_link_libraries(ReExploreXP ${SDL2_LIBRARIES})
-else()
-  target_link_libraries(ReExploreXP SDL2)
 endif()
 
 if (CURL_FOUND)
