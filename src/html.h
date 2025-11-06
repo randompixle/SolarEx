@@ -1,5 +1,5 @@
 #pragma once
-#include <SDL2/SDL.h>
+#include "re_sdl.h"
 #include <stddef.h>
 
 #ifdef __cplusplus
