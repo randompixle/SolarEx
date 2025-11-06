@@ -2,19 +2,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(RE_HAVE_CURL)
-#if defined(__has_include)
-#  if __has_include(<curl/curl.h>)
-#    define REEXPLORE_HAVE_CURL_HEADERS 1
-#  endif
-#else
-#  define REEXPLORE_HAVE_CURL_HEADERS 1
-#endif
-#endif
-
-#if defined(REEXPLORE_HAVE_CURL_HEADERS)
-#include <curl/curl.h>
-
 static size_t write_cb(void* ptr, size_t size, size_t nmemb, void* userdata) {
   size_t add = size * nmemb;
   ReBuffer* b = (ReBuffer*)userdata;
