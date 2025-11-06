@@ -1,5 +1,6 @@
-#include <SDL2/SDL.h>
+#include "re_sdl.h"
 #include <string.h>
+#include <stdlib.h>
 #include "render.h"
 #include "html.h"
 #include "net.h"
@@ -66,6 +67,8 @@ int main(int argc, char** argv) {
   }
 
   reui_shutdown(&ui);
+  SDL_DestroyRenderer(ren);
+  SDL_DestroyWindow(win);
   SDL_Quit();
   return 0;
 }

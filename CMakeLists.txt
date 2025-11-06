@@ -7,6 +7,7 @@ include_directories(${CMAKE_SOURCE_DIR}/src)
 include_directories(${CMAKE_SOURCE_DIR}/third_party)
 
 find_package(PkgConfig QUIET)
+option(RE_REQUIRE_NATIVE "Require native SDL2/libcurl backends" OFF)
 if (PkgConfig_FOUND)
   pkg_check_modules(SDL2 QUIET sdl2)
   pkg_check_modules(CURL QUIET libcurl)
@@ -16,8 +17,7 @@ if (SDL2_FOUND)
   include_directories(${SDL2_INCLUDE_DIRS})
   link_directories(${SDL2_LIBRARY_DIRS})
 else()
-  message(WARNING "pkg-config SDL2 not found; using fallback")
-  include_directories(/usr/include/SDL2)
+  message(WARNING "pkg-config SDL2 not found; using stub implementation")
 endif()
 
 if (CURL_FOUND)
@@ -27,23 +27,32 @@ else()
   message(WARNING "pkg-config curl not found; using fallback")
 endif()
 
+if (RE_REQUIRE_NATIVE)
+  if (NOT SDL2_FOUND)
+    message(FATAL_ERROR "SDL2 development libraries are required. Please install libsdl2-dev / SDL2-devel.")
+  endif()
+  if (NOT CURL_FOUND)
+    message(FATAL_ERROR "libcurl development libraries are required. Please install libcurl-dev / libcurl-devel.")
+  endif()
+endif()
+
 add_executable(ReExploreXP
         src/main.c
         src/render.c
         src/html.c
         src/net.c
         src/font.c
-        src/stb_impl.c
 )
+
+if (NOT SDL2_FOUND)
+  target_sources(ReExploreXP PRIVATE src/sdl_stub.c)
+endif()
 
 if (SDL2_FOUND)
   target_link_libraries(ReExploreXP ${SDL2_LIBRARIES})
-else()
-  target_link_libraries(ReExploreXP SDL2)
 endif()
 
 if (CURL_FOUND)
   target_link_libraries(ReExploreXP ${CURL_LIBRARIES})
-else()
-  target_link_libraries(ReExploreXP curl)
+  target_compile_definitions(ReExploreXP PRIVATE RE_HAVE_CURL=1)
 endif()
