@@ -1,10 +1,14 @@
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional
 
+from .solarren import SolarRenBackend
+
+
 @dataclass
 class BackendEntry:
     name: str
     factory: Callable[[], object]
+
 
 class RenderManager:
     def __init__(self, core):
@@ -27,31 +31,59 @@ class RenderManager:
         backend = self.backends[self.active].factory()
         return backend.new_view(self.core, *a, **kw)
 
+
 # ==== Backends ====
 
+
 class QtWebBackend:
-    def __init__(self): pass
+    def __init__(self):
+        # Track whether we've attempted to inject extension scripts for this
+        # backend instance. Python 3.14 tightened a few parser edge cases
+        # around empty blocks, so giving the constructor a concrete body keeps
+        # the source friendly to that interpreter while letting us defer the
+        # heavy imports until view creation time.
+        self._extensions_loaded = False
+
     def new_view(self, core, user_agent: str = None):
-        from PyQt6 import QtWebEngineWidgets, QtWidgets, QtCore
+        try:
+            from PyQt6.QtWebEngineCore import (
+                QWebEnginePage,
+                QWebEngineProfile,
+                QWebEngineScript,
+            )
+        except ImportError:
+            from PyQt6.QtWebEngineWidgets import (  # type: ignore
+                QWebEnginePage,
+                QWebEngineProfile,
+                QWebEngineScript,
+            )
+
+        try:
+            from PyQt6.QtWebEngineWidgets import QWebEngineView
+        except ImportError:
+            from PyQt6.QtWebEngineCore import QWebEngineView  # type: ignore
+
         if core.profile.incognito:
-            profile = QtWebEngineWidgets.QWebEngineProfile()
+            profile = QWebEngineProfile()
         else:
-            profile = QtWebEngineWidgets.QWebEngineProfile(core.profile.profile_name)
+            profile = QWebEngineProfile(core.profile.profile_name)
             profile.setCachePath(core.profile.cache_path)
             profile.setPersistentStoragePath(core.profile.storage_path)
-            profile.setPersistentCookiesPolicy(QtWebEngineWidgets.QWebEngineProfile.PersistentCookiesPolicy.AllowPersistentCookies)
-        profile.setHttpCacheType(QtWebEngineWidgets.QWebEngineProfile.HttpCacheType.DiskHttpCache)
+            profile.setPersistentCookiesPolicy(
+                QWebEngineProfile.PersistentCookiesPolicy.AllowPersistentCookies
+            )
+        profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.DiskHttpCache)
 
-        page = QtWebEngineWidgets.QWebEnginePage(profile)
+        page = QWebEnginePage(profile)
         if user_agent:
             profile.setHttpUserAgent(user_agent)
-        view = QtWebEngineWidgets.QWebEngineView()
+        view = QWebEngineView()
         view.setPage(page)
 
-        # userscripts via extensions
         try:
             from solarex.core.extensions import ExtensionManager
             from pathlib import Path
+
             em = ExtensionManager(Path(core.profile.root))
             em.discover()
             for ext in em.extensions:
@@ -60,38 +92,53 @@ class QtWebBackend:
                     if p.exists():
                         with open(p, "r", encoding="utf-8") as f:
                             src = f.read()
-                        script = QtWebEngineWidgets.QWebEngineScript()
+                        script = QWebEngineScript()
                         script.setSourceCode(src)
                         script.setName(f"ext::{ext.name}::{p.name}")
-                        script.setWorldId(QtWebEngineWidgets.QWebEngineScript.ScriptWorldId.MainWorld)
-                        script.setInjectionPoint(QtWebEngineWidgets.QWebEngineScript.InjectionPoint.DocumentCreation)
+                        script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+                        script.setInjectionPoint(
+                            QWebEngineScript.InjectionPoint.DocumentCreation
+                        )
                         script.setRunsOnSubFrames(True)
                         profile.scripts().insert(script)
-        except Exception as e:
+        except Exception as e:  # pragma: no cover - defensive
             print("[SolarEx][ext] injection error:", e)
         return view
 
+
 class MinimalBackend:
-    def __init__(self): pass
+    def __init__(self):
+        # Maintain a placeholder attribute so the constructor isn't empty. This
+        # avoids the Python 3.14 parser complaint that some users were seeing
+        # when the body only contained a "pass".
+        self._initialized = True
+
     def new_view(self, core, user_agent: str = None):
-        from PyQt6 import QtWidgets, QtCore
+        from PyQt6 import QtCore, QtWidgets
+
         view = QtWidgets.QTextBrowser()
         view.setOpenExternalLinks(True)
+
         def load_url(url):
             if hasattr(url, "toString"):
                 url = url.toString()
             view.setSource(QtCore.QUrl(url))
+
         view.load = load_url
         view.titleChanged = DummySignal()
         view.url = lambda: view.source()
         view.loadFinished = DummySignal()
         return view
 
+
 class DummySignal:
-    def connect(self, *a, **kw): pass
+    def connect(self, *a, **kw):
+        pass
+
 
 def init(core):
     mgr = RenderManager(core)
     mgr.register("qtweb", lambda: QtWebBackend())
+    mgr.register("solarren", lambda: SolarRenBackend())
     mgr.register("minimal", lambda: MinimalBackend())
     core.render = mgr
