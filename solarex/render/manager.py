@@ -18,6 +18,7 @@ class BackendEntry:
     name: str
     factory: Callable[[], object]
 
+
 class RenderManager:
     def __init__(self, core):
         self.core = core
@@ -39,10 +40,14 @@ class RenderManager:
         backend = self.backends[self.active].factory()
         return backend.new_view(self.core, *a, **kw)
 
+
 # ==== Backends ====
 
+
 class QtWebBackend:
-    def __init__(self): pass
+    def __init__(self):
+        pass
+
     def new_view(self, core, user_agent: str = None):
         try:
             from PyQt6.QtWebEngineCore import (
@@ -79,10 +84,10 @@ class QtWebBackend:
         view = QWebEngineView()
         view.setPage(page)
 
-        # userscripts via extensions
         try:
             from solarex.core.extensions import ExtensionManager
             from pathlib import Path
+
             em = ExtensionManager(Path(core.profile.root))
             em.discover()
             for ext in em.extensions:
@@ -98,7 +103,7 @@ class QtWebBackend:
                         script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
                         script.setRunsOnSubFrames(True)
                         profile.scripts().insert(script)
-        except Exception as e:
+        except Exception as e:  # pragma: no cover - defensive
             print("[SolarEx][ext] injection error:", e)
         return view
 
@@ -888,23 +893,31 @@ class SolarRenBackend:
         return SolarRenView(core, user_agent or self._default_agent)
 
 class MinimalBackend:
-    def __init__(self): pass
+    def __init__(self):
+        pass
+
     def new_view(self, core, user_agent: str = None):
-        from PyQt6 import QtWidgets, QtCore
+        from PyQt6 import QtCore, QtWidgets
+
         view = QtWidgets.QTextBrowser()
         view.setOpenExternalLinks(True)
+
         def load_url(url):
             if hasattr(url, "toString"):
                 url = url.toString()
             view.setSource(QtCore.QUrl(url))
+
         view.load = load_url
         view.titleChanged = DummySignal()
         view.url = lambda: view.source()
         view.loadFinished = DummySignal()
         return view
 
+
 class DummySignal:
-    def connect(self, *a, **kw): pass
+    def connect(self, *a, **kw):
+        pass
+
 
 def init(core):
     mgr = RenderManager(core)
