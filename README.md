@@ -40,9 +40,8 @@ python solarx.py --mode classic --home https://www.google.com/
 Useful flags:
 
 - `--mode {classic,pov}` – choose between the tabbed classic window or a borderless POV window.
-- `--renderer {qtweb,solarren,minimal}` – switch render backends. `solarren` uses a pure Python fetcher
-  to display simplified page text, while `minimal` uses `QTextBrowser` for environments without
-  QtWebEngine support.
+- `--renderer {qtweb,minimal}` – switch render backends. `minimal` uses `QTextBrowser` for environments
+  without QtWebEngine support.
 - `--incognito` – start with an in-memory profile that avoids writing to disk.
 - `--ua` – override the user agent string.
 
