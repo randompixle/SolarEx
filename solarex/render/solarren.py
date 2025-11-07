@@ -96,7 +96,10 @@ class SolarRenExtractor(HTMLParser):
             self._pending_prefix = prefix
             return
 
-        attrs_dict = {k.lower(): v for k, v in attrs}
+        attrs_dict = {
+            k.lower(): ("" if v is None else str(v))
+            for k, v in attrs
+        }
         if tag == "input":
             control_info = self._make_input_control(attrs_dict)
             self._append_form_control(control_info)
@@ -366,6 +369,16 @@ class SolarRenExtractor(HTMLParser):
         return f'<div class="solarren-control">[{summary}]</div>'
 
     # ---- Output helpers ----
+    def _normalize_chunk(self, chunk: Optional[str]) -> Optional[str]:
+        if chunk is None:
+            return None
+        if not isinstance(chunk, str):
+            try:
+                chunk = str(chunk)
+            except Exception:  # pragma: no cover - defensive
+                return None
+        return chunk
+
     def get_text(self) -> str:
         if not self._segments:
             return ""
@@ -419,6 +432,7 @@ class SolarRenExtractor(HTMLParser):
                     chunk = (prefix or "") + f"{content} [{href}]"
                 else:
                     chunk = (prefix or "") + content
+            chunk = self._normalize_chunk(chunk)
             if not chunk:
                 continue
             if parts and not parts[-1].endswith("\n"):
@@ -449,6 +463,9 @@ class SolarRenExtractor(HTMLParser):
             if kind == "text":
                 _, prefix, content = segment
                 chunk = (prefix or "") + content
+                chunk = self._normalize_chunk(chunk)
+                if not chunk:
+                    continue
                 chunk = chunk.strip()
                 if not chunk:
                     continue
@@ -459,7 +476,8 @@ class SolarRenExtractor(HTMLParser):
             elif kind == "pre":
                 _, prefix, content = segment
                 chunk = (prefix or "") + content
-                if not chunk.strip():
+                chunk = self._normalize_chunk(chunk)
+                if not chunk or not chunk.strip():
                     continue
                 parts.append("<pre>")
                 parts.append(escape(chunk))
@@ -468,8 +486,12 @@ class SolarRenExtractor(HTMLParser):
             elif kind == "link-pre":
                 _, prefix, content, href = segment
                 chunk = (prefix or "") + content
-                if href:
-                    safe_href = escape(href, quote=True)
+                chunk = self._normalize_chunk(chunk)
+                if not chunk:
+                    continue
+                link_target = self._normalize_chunk(href) if href else ""
+                if link_target:
+                    safe_href = escape(link_target, quote=True)
                     parts.append("<pre>")
                     parts.append(f'<a href="{safe_href}">{escape(chunk)}</a>')
                     parts.append("</pre>")
@@ -480,18 +502,26 @@ class SolarRenExtractor(HTMLParser):
                 last_was_break = True
             elif kind == "control":
                 info = segment[1]
-                parts.append(self._control_html(info))
+                control_html = self._control_html(info)
+                control_html = self._normalize_chunk(control_html)
+                if not control_html:
+                    continue
+                parts.append(control_html)
                 last_was_break = True
             else:
                 _, prefix, content, href = segment
                 chunk = (prefix or "") + content
+                chunk = self._normalize_chunk(chunk)
+                if not chunk:
+                    continue
                 chunk = chunk.strip()
                 if not chunk:
                     continue
                 if not last_was_break:
                     parts.append(" ")
-                if href:
-                    safe_href = escape(href, quote=True)
+                link_target = self._normalize_chunk(href) if href else ""
+                if link_target:
+                    safe_href = escape(link_target, quote=True)
                     parts.append(f'<a href="{safe_href}">{escape(chunk)}</a>')
                 else:
                     parts.append(escape(chunk))
