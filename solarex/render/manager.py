@@ -32,20 +32,39 @@ class RenderManager:
 class QtWebBackend:
     def __init__(self): pass
     def new_view(self, core, user_agent: str = None):
-        from PyQt6 import QtWebEngineWidgets, QtWidgets, QtCore
+        try:
+            from PyQt6.QtWebEngineCore import (
+                QWebEnginePage,
+                QWebEngineProfile,
+                QWebEngineScript,
+            )
+        except ImportError:
+            # Older PyQt6 releases shipped these APIs from QtWebEngineWidgets
+            from PyQt6.QtWebEngineWidgets import (  # type: ignore
+                QWebEnginePage,
+                QWebEngineProfile,
+                QWebEngineScript,
+            )
+
+        try:
+            from PyQt6.QtWebEngineWidgets import QWebEngineView
+        except ImportError:
+            # Newer distributions keep the view class in QtWebEngineCore
+            from PyQt6.QtWebEngineCore import QWebEngineView  # type: ignore
+
         if core.profile.incognito:
-            profile = QtWebEngineWidgets.QWebEngineProfile()
+            profile = QWebEngineProfile()
         else:
-            profile = QtWebEngineWidgets.QWebEngineProfile(core.profile.profile_name)
+            profile = QWebEngineProfile(core.profile.profile_name)
             profile.setCachePath(core.profile.cache_path)
             profile.setPersistentStoragePath(core.profile.storage_path)
-            profile.setPersistentCookiesPolicy(QtWebEngineWidgets.QWebEngineProfile.PersistentCookiesPolicy.AllowPersistentCookies)
-        profile.setHttpCacheType(QtWebEngineWidgets.QWebEngineProfile.HttpCacheType.DiskHttpCache)
+            profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.AllowPersistentCookies)
+        profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.DiskHttpCache)
 
-        page = QtWebEngineWidgets.QWebEnginePage(profile)
+        page = QWebEnginePage(profile)
         if user_agent:
             profile.setHttpUserAgent(user_agent)
-        view = QtWebEngineWidgets.QWebEngineView()
+        view = QWebEngineView()
         view.setPage(page)
 
         # userscripts via extensions
@@ -60,11 +79,11 @@ class QtWebBackend:
                     if p.exists():
                         with open(p, "r", encoding="utf-8") as f:
                             src = f.read()
-                        script = QtWebEngineWidgets.QWebEngineScript()
+                        script = QWebEngineScript()
                         script.setSourceCode(src)
                         script.setName(f"ext::{ext.name}::{p.name}")
-                        script.setWorldId(QtWebEngineWidgets.QWebEngineScript.ScriptWorldId.MainWorld)
-                        script.setInjectionPoint(QtWebEngineWidgets.QWebEngineScript.InjectionPoint.DocumentCreation)
+                        script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+                        script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
                         script.setRunsOnSubFrames(True)
                         profile.scripts().insert(script)
         except Exception as e:
