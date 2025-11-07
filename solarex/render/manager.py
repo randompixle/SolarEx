@@ -409,59 +409,11 @@ class SolarRenBackend:
                 return len(self._segments) - 1
 
             def _append_image(self, attrs: Dict[str, Optional[str]]):
-                preferred_sources = [
-                    attrs.get("data-iurl"),
-                    attrs.get("data-fullsrc"),
-                    attrs.get("data-original"),
-                    attrs.get("data-actualsrc"),
-                    attrs.get("data-src"),
-                    attrs.get("data-lazy-src"),
-                    attrs.get("data-thumb"),
-                    attrs.get("src"),
-                ]
-                src = ""
-                placeholder_src = ""
-                for candidate in preferred_sources:
-                    if not candidate:
-                        continue
-                    candidate = candidate.strip()
-                    if not candidate:
-                        continue
-                    if candidate.lower().startswith("data:"):
-                        if not placeholder_src:
-                            placeholder_src = candidate
-                        continue
-                    src = candidate
-                    break
-                if not src:
-                    src = placeholder_src
-                if not src and (attrs.get("srcset") or attrs.get("data-srcset")):
-                    srcset = attrs.get("srcset") or attrs.get("data-srcset") or ""
-                    chosen = ""
-                    chosen_weight = -1.0
-                    for entry in srcset.split(","):
-                        entry = entry.strip()
-                        if not entry:
-                            continue
-                        parts = entry.split()
-                        candidate = parts[0]
-                        weight = 1.0
-                        if len(parts) > 1:
-                            descriptor = parts[1]
-                            if descriptor.endswith("x"):
-                                try:
-                                    weight = float(descriptor[:-1])
-                                except ValueError:
-                                    weight = 1.0
-                            elif descriptor.endswith("w"):
-                                try:
-                                    weight = float(descriptor[:-1]) / 100.0
-                                except ValueError:
-                                    weight = 1.0
-                        if weight >= chosen_weight:
-                            chosen = candidate
-                            chosen_weight = weight
-                    src = chosen
+                src = attrs.get("src") or attrs.get("data-src") or attrs.get("data-lazy-src") or ""
+                if not src and attrs.get("srcset"):
+                    srcset = attrs.get("srcset") or ""
+                    primary = srcset.split(",", 1)[0].strip().split(" ", 1)[0]
+                    src = primary
                 if not src:
                     return
                 resolved = urljoin(self.base_url, src)
@@ -621,64 +573,6 @@ class SolarRenBackend:
                         heading_parts.append(f"({escape(btn_type)})")
                 else:
                     heading_parts.append(escape(kind.title()))
-
-                descriptor = (
-                    info.get("label")
-                    or info.get("placeholder")
-                    or info.get("name")
-                    or ""
-                )
-                descriptor = self._clean_inline_value(descriptor) if descriptor else ""
-                if descriptor:
-                    heading_parts.append(f"– {escape(descriptor)}")
-                heading_html = " ".join(heading_parts) or "Control"
-
-                details: list[str] = []
-
-                def add_detail(label: str, value: str):
-                    cleaned = self._clean_inline_value(value)
-                    if not cleaned:
-                        return
-                    details.append(
-                        "".join(
-                            [
-                                '<div class="solarren-control-row">',
-                                f'<span class="solarren-control-key">{escape(label)}</span>',
-                                f'<span class="solarren-control-value">{escape(cleaned)}</span>',
-                                "</div>",
-                            ]
-                        )
-                    )
-
-                field_labels = {
-                    "name": "Name",
-                    "placeholder": "Placeholder",
-                    "label": "Label",
-                    "value": "Value",
-                    "rows": "Rows",
-                    "cols": "Columns",
-                    "type": "Type",
-                }
-                for key, label in field_labels.items():
-                    if key == "type" and kind not in {"input", "button"}:
-                        continue
-                    value = info.get(key)
-                    if not value:
-                        continue
-                    add_detail(label, value)
-
-                if not details:
-                    details.append(
-                        '<div class="solarren-control-row"><span class="solarren-control-value">No extra metadata</span></div>'
-                    )
-
-                return (
-                    '<div class="solarren-control">'
-                    f'<div class="solarren-control-title">{heading_html}</div>'
-                    '<div class="solarren-control-meta">'
-                    + "".join(details)
-                    + "</div></div>"
-                )
 
             def feed(self, html: str):
                 self._parser.feed(html)
@@ -1035,6 +929,53 @@ class SolarRenBackend:
 
                     .solarren-control-value {{
                         font-family: "JetBrains Mono", "Fira Code", "Source Code Pro", monospace;
+                    }}
+
+                    .solarren-image {{
+                        margin: 16px 0;
+                        padding: 12px;
+                        border: 1px solid {qcolor_to_css(muted)};
+                        border-radius: 10px;
+                        background-color: {qcolor_to_css(base.lighter(108))};
+                        text-align: center;
+                    }}
+
+                    .solarren-image img {{
+                        max-width: 100%;
+                        border-radius: 8px;
+                    }}
+
+                    .solarren-image figcaption {{
+                        margin-top: 8px;
+                        font-size: 12px;
+                        color: {qcolor_to_css(muted)};
+                    }}
+
+                    .solarren-download {{
+                        margin-top: 10px;
+                    }}
+
+                    .solarren-download-link {{
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 6px;
+                        padding: 6px 12px;
+                        border-radius: 6px;
+                        border: 1px solid {qcolor_to_css(muted)};
+                        background-color: {qcolor_to_css(base.lighter(120))};
+                        color: {qcolor_to_css(text)};
+                        text-decoration: none;
+                        font-size: 12px;
+                        transition: background-color 0.2s ease;
+                    }}
+
+                    .solarren-download-link::before {{
+                        content: "\2193";
+                        font-size: 14px;
+                    }}
+
+                    .solarren-download-link:hover {{
+                        background-color: {qcolor_to_css(base.lighter(140))};
                     }}
 
                     .solarren-image {{
