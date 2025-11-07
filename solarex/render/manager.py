@@ -8,10 +8,7 @@ import urllib.error
 import urllib.request
 from html import escape, unescape
 from urllib.parse import urljoin
-import threading
-import urllib.error
-import urllib.request
-from html import unescape
+
 
 @dataclass
 class BackendEntry:
@@ -56,7 +53,6 @@ class QtWebBackend:
                 QWebEngineScript,
             )
         except ImportError:
-            # Older PyQt6 releases shipped these APIs from QtWebEngineWidgets
             from PyQt6.QtWebEngineWidgets import (  # type: ignore
                 QWebEnginePage,
                 QWebEngineProfile,
@@ -66,7 +62,6 @@ class QtWebBackend:
         try:
             from PyQt6.QtWebEngineWidgets import QWebEngineView
         except ImportError:
-            # Newer distributions keep the view class in QtWebEngineCore
             from PyQt6.QtWebEngineCore import QWebEngineView  # type: ignore
 
         if core.profile.incognito:
@@ -107,6 +102,7 @@ class QtWebBackend:
             print("[SolarEx][ext] injection error:", e)
         return view
 
+
 class SolarRenBackend:
     def __init__(self):
         self._default_agent = "SolarRen/1.0"
@@ -126,56 +122,51 @@ class SolarRenBackend:
                         "article",
                         "aside",
                         "blockquote",
+                        "button",
                         "div",
                         "footer",
                         "form",
                         "header",
-                        "li",
                         "input",
+                        "li",
                         "main",
                         "nav",
                         "p",
                         "pre",
-                        "textarea",
-                        "button",
                         "section",
                         "table",
+                        "textarea",
                         "tr",
                     }
 
                     DOUBLE_BREAK_TAGS = {
                         "article",
                         "aside",
-                        "header",
                         "footer",
-                        "main",
-                        "section",
                         "h1",
                         "h2",
                         "h3",
                         "h4",
                         "h5",
                         "h6",
+                        "header",
+                        "main",
                         "p",
                         "pre",
+                        "section",
                         "textarea",
                     }
 
                     LIST_TAGS = {"ul", "ol"}
 
                     def __init__(self, outer: "TextExtractor"):
-            def __init__(self):
-                from html.parser import HTMLParser
-
-                class _Parser(HTMLParser):
-                    def __init__(self, outer):
                         super().__init__()
                         self.outer = outer
                         self._ignore_stack: list[str] = []
 
                     def handle_starttag(self, tag, attrs):
                         tag = tag.lower()
-                        if tag in ("script", "style"):
+                        if tag in {"script", "style"}:
                             self._ignore_stack.append(tag)
                             return
 
@@ -212,24 +203,27 @@ class SolarRenBackend:
                         if tag == "input":
                             attrs_dict = {k.lower(): v for k, v in attrs}
                             control_info = self.outer._make_input_control(attrs_dict)
-                            self.outer._append_form_control(control_info)
+                            if control_info:
+                                self.outer._append_form_control(control_info)
                             return
 
                         if tag == "textarea":
                             attrs_dict = {k.lower(): v for k, v in attrs}
                             control_info = self.outer._make_textarea_control(attrs_dict)
                             index = self.outer._append_form_control(control_info)
-                            self.outer._textarea_stack.append(index)
+                            if index >= 0:
+                                self.outer._textarea_stack.append(index)
                             return
 
                         if tag == "button":
                             attrs_dict = {k.lower(): v for k, v in attrs}
                             control_info = self.outer._make_button_control(attrs_dict)
                             index = self.outer._append_form_control(control_info)
-                            self.outer._button_stack.append(index)
+                            if index >= 0:
+                                self.outer._button_stack.append(index)
                             return
 
-                        if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+                        if tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
                             self.outer._heading_level = tag
                             return
 
@@ -237,14 +231,25 @@ class SolarRenBackend:
                             self.outer._pre_depth += 1
                             return
 
+                        if tag == "img":
+                            attrs_dict = {k.lower(): v for k, v in attrs}
+                            self.outer._append_image(attrs_dict)
+                            return
+
                         if tag == "a":
                             attrs_dict = {k.lower(): v for k, v in attrs}
                             href = attrs_dict.get("href") or ""
                             resolved = urljoin(self.outer.base_url, href) if href else ""
-                            self.outer._anchor_stack.append(resolved)
+                            download_present = any(k.lower() == "download" for k, _ in attrs)
+                            download_name = attrs_dict.get("download") if download_present else None
+                            anchor_info = {
+                                "href": resolved,
+                                "download": "1" if download_present else "",
+                            }
+                            if download_name:
+                                anchor_info["download_name"] = download_name
+                            self.outer._anchor_stack.append(anchor_info)
                             return
-                        elif not self._ignore_stack and tag in ("br", "p", "div", "li", "section", "article", "tr", "h1", "h2", "h3", "h4", "h5", "h6"):
-                            self.outer._chunks.append("\n")
 
                     def handle_endtag(self, tag):
                         tag = tag.lower()
@@ -281,7 +286,7 @@ class SolarRenBackend:
                             self.outer._append_break(True)
                             return
 
-                        if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+                        if tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
                             self.outer._append_break(True)
                             self.outer._heading_level = None
                             return
@@ -302,16 +307,20 @@ class SolarRenBackend:
                         if self.outer._heading_level:
                             text = text.upper()
                         if self.outer._anchor_stack:
-                            href = self.outer._anchor_stack[-1]
-                            self.outer._append_link(text, href)
+                            anchor_info = self.outer._anchor_stack[-1]
+                            self.outer._append_link(text, anchor_info)
                         else:
                             self.outer._append_text(text)
+
+                    def handle_startendtag(self, tag, attrs):
+                        self.handle_starttag(tag, attrs)
+                        self.handle_endtag(tag)
 
                 self.base_url = base_url
                 self._segments: list[tuple] = []
                 self._pending_prefix: Optional[str] = None
                 self._heading_level: Optional[str] = None
-                self._anchor_stack: list[str] = []
+                self._anchor_stack: list[dict[str, str]] = []
                 self._list_stack: list[dict] = []
                 self._pre_depth: int = 0
                 self._textarea_stack: list[int] = []
@@ -357,26 +366,120 @@ class SolarRenBackend:
                 prefix = self._consume_prefix()
                 self._segments.append(("text", prefix, cleaned.strip()))
 
-            def _append_link(self, text: str, href: str):
+            def _append_link(self, text: str, anchor_info: Dict[str, str]):
                 if self._pre_depth:
                     cleaned = text.replace("\r\n", "\n")
                     if not cleaned:
                         return
                     prefix = self._consume_prefix()
-                    self._segments.append(("link-pre", prefix, cleaned, href))
+                    self._segments.append(
+                        (
+                            "link-pre",
+                            prefix,
+                            cleaned,
+                            anchor_info.get("href", ""),
+                        )
+                    )
                     return
 
                 cleaned = re.sub(r"\s+", " ", text)
                 if not cleaned.strip():
                     return
                 prefix = self._consume_prefix()
-                self._segments.append(("link", prefix, cleaned.strip(), href))
+                href = anchor_info.get("href", "")
+                if anchor_info.get("download"):
+                    self._segments.append(
+                        (
+                            "download",
+                            prefix,
+                            cleaned.strip(),
+                            href,
+                            anchor_info.get("download_name", ""),
+                        )
+                    )
+                else:
+                    self._segments.append(("link", prefix, cleaned.strip(), href))
 
-            def _append_form_control(self, info: Dict[str, str]) -> int:
+            def _append_form_control(self, info: Optional[Dict[str, str]]) -> int:
+                if not info:
+                    return -1
                 self._pending_prefix = None
                 segment = ["control", info]
                 self._segments.append(segment)
                 return len(self._segments) - 1
+
+            def _append_image(self, attrs: Dict[str, Optional[str]]):
+                preferred_sources = [
+                    attrs.get("data-iurl"),
+                    attrs.get("data-fullsrc"),
+                    attrs.get("data-original"),
+                    attrs.get("data-actualsrc"),
+                    attrs.get("data-src"),
+                    attrs.get("data-lazy-src"),
+                    attrs.get("data-thumb"),
+                    attrs.get("src"),
+                ]
+                src = ""
+                placeholder_src = ""
+                for candidate in preferred_sources:
+                    if not candidate:
+                        continue
+                    candidate = candidate.strip()
+                    if not candidate:
+                        continue
+                    if candidate.lower().startswith("data:"):
+                        if not placeholder_src:
+                            placeholder_src = candidate
+                        continue
+                    src = candidate
+                    break
+                if not src:
+                    src = placeholder_src
+                if not src and (attrs.get("srcset") or attrs.get("data-srcset")):
+                    srcset = attrs.get("srcset") or attrs.get("data-srcset") or ""
+                    chosen = ""
+                    chosen_weight = -1.0
+                    for entry in srcset.split(","):
+                        entry = entry.strip()
+                        if not entry:
+                            continue
+                        parts = entry.split()
+                        candidate = parts[0]
+                        weight = 1.0
+                        if len(parts) > 1:
+                            descriptor = parts[1]
+                            if descriptor.endswith("x"):
+                                try:
+                                    weight = float(descriptor[:-1])
+                                except ValueError:
+                                    weight = 1.0
+                            elif descriptor.endswith("w"):
+                                try:
+                                    weight = float(descriptor[:-1]) / 100.0
+                                except ValueError:
+                                    weight = 1.0
+                        if weight >= chosen_weight:
+                            chosen = candidate
+                            chosen_weight = weight
+                    src = chosen
+                if not src:
+                    return
+                resolved = urljoin(self.base_url, src)
+                alt = attrs.get("alt") or attrs.get("aria-label") or ""
+                title = attrs.get("title") or ""
+                width = attrs.get("width") or ""
+                height = attrs.get("height") or ""
+                self._pending_prefix = None
+                self._segments.append(
+                    (
+                        "image",
+                        resolved,
+                        alt,
+                        title,
+                        width,
+                        height,
+                    )
+                )
 
             def _extend_textarea_value(self, text: str):
                 if not self._textarea_stack or not text:
@@ -421,8 +524,10 @@ class SolarRenBackend:
                         if not info.get("label"):
                             info["label"] = trimmed
 
-            def _make_input_control(self, attrs: Dict[str, str]) -> Dict[str, str]:
+            def _make_input_control(self, attrs: Dict[str, str]) -> Optional[Dict[str, str]]:
                 control_type = (attrs.get("type") or "text").lower()
+                if control_type == "hidden":
+                    return None
                 label = attrs.get("aria-label") or attrs.get("title") or ""
                 placeholder = attrs.get("placeholder") or label
                 return {
@@ -500,21 +605,80 @@ class SolarRenBackend:
                 return f"[{summary}]"
 
             def _control_html(self, info: Dict[str, str]) -> str:
-                summary = escape(self._control_summary(info))
-                return f'<div class="solarren-control">[{summary}]</div>'
+                kind = info.get("kind", "control")
+                heading_parts: list[str] = []
+                if kind == "input":
+                    heading_parts.append("Input")
+                    ctrl_type = info.get("type") or "text"
+                    if ctrl_type and ctrl_type != "text":
+                        heading_parts.append(f"({escape(ctrl_type)})")
+                elif kind == "textarea":
+                    heading_parts.append("Textarea")
+                elif kind == "button":
+                    heading_parts.append("Button")
+                    btn_type = info.get("type") or "button"
+                    if btn_type and btn_type != "button":
+                        heading_parts.append(f"({escape(btn_type)})")
+                else:
+                    heading_parts.append(escape(kind.title()))
 
-                        elif not self._ignore_stack and tag in ("p", "div", "li", "section", "article", "tr"):
-                            self.outer._chunks.append("\n")
+                descriptor = (
+                    info.get("label")
+                    or info.get("placeholder")
+                    or info.get("name")
+                    or ""
+                )
+                descriptor = self._clean_inline_value(descriptor) if descriptor else ""
+                if descriptor:
+                    heading_parts.append(f"– {escape(descriptor)}")
+                heading_html = " ".join(heading_parts) or "Control"
 
-                    def handle_data(self, data):
-                        if self._ignore_stack:
-                            return
-                        text = unescape(data)
-                        if text.strip():
-                            self.outer._chunks.append(text.strip())
+                details: list[str] = []
 
-                self._chunks: list[str] = []
-                self._parser = _Parser(self)
+                def add_detail(label: str, value: str):
+                    cleaned = self._clean_inline_value(value)
+                    if not cleaned:
+                        return
+                    details.append(
+                        "".join(
+                            [
+                                '<div class="solarren-control-row">',
+                                f'<span class="solarren-control-key">{escape(label)}</span>',
+                                f'<span class="solarren-control-value">{escape(cleaned)}</span>',
+                                "</div>",
+                            ]
+                        )
+                    )
+
+                field_labels = {
+                    "name": "Name",
+                    "placeholder": "Placeholder",
+                    "label": "Label",
+                    "value": "Value",
+                    "rows": "Rows",
+                    "cols": "Columns",
+                    "type": "Type",
+                }
+                for key, label in field_labels.items():
+                    if key == "type" and kind not in {"input", "button"}:
+                        continue
+                    value = info.get(key)
+                    if not value:
+                        continue
+                    add_detail(label, value)
+
+                if not details:
+                    details.append(
+                        '<div class="solarren-control-row"><span class="solarren-control-value">No extra metadata</span></div>'
+                    )
+
+                return (
+                    '<div class="solarren-control">'
+                    f'<div class="solarren-control-title">{heading_html}</div>'
+                    '<div class="solarren-control-meta">'
+                    + "".join(details)
+                    + "</div></div>"
+                )
 
             def feed(self, html: str):
                 self._parser.feed(html)
@@ -568,6 +732,29 @@ class SolarRenBackend:
                         if parts and not parts[-1].endswith("\n"):
                             parts.append("\n")
                         chunk = self._control_text(info)
+                    elif kind == "image":
+                        _, src, alt, title, width, height = segment
+                        if parts and not parts[-1].endswith("\n"):
+                            parts.append("\n")
+                        details: list[str] = []
+                        if alt:
+                            details.append(f'alt="{self._clean_inline_value(alt)}"')
+                        elif title:
+                            details.append(f'title="{self._clean_inline_value(title)}"')
+                        if width and height:
+                            details.append(f"{width}×{height}")
+                        elif width or height:
+                            details.append(width or height)
+                        details.append(f'src="{self._clean_inline_value(src)}"')
+                        chunk = f"[image {' '.join(details)}]"
+                    elif kind == "download":
+                        _, prefix, content, href, filename = segment
+                        label = (prefix or "") + content
+                        target = filename or href
+                        if target:
+                            chunk = f"{label} [download {self._clean_inline_value(target)}]"
+                        else:
+                            chunk = label
                     else:
                         _, prefix, content, href = segment
                         if href:
@@ -581,7 +768,7 @@ class SolarRenBackend:
                         parts.append(" ")
                     parts.append(chunk)
 
-                text_output = "".join(parts).strip()
+                text_output = "".join(part for part in parts if isinstance(part, str)).strip()
                 text_output = re.sub(r"\n{3,}", "\n\n", text_output)
                 return text_output
 
@@ -639,8 +826,60 @@ class SolarRenBackend:
                         last_was_break = True
                     elif kind == "control":
                         info = segment[1]
-                        parts.append(self._control_html(info))
+                        rendered = self._control_html(info)
+                        if rendered:
+                            parts.append(rendered)
                         last_was_break = True
+                    elif kind == "image":
+                        _, src, alt, title, width, height = segment
+                        if not src:
+                            continue
+                        if not last_was_break:
+                            parts.append("<br/><br/>")
+                        safe_src = escape(src, quote=True)
+                        img_attrs = [f'src="{safe_src}"']
+                        if alt:
+                            img_attrs.append(f'alt="{escape(alt)}"')
+                        elif title:
+                            img_attrs.append(f'alt="{escape(title)}"')
+                        if width and width.isdigit():
+                            img_attrs.append(f'width="{width}"')
+                        if height and height.isdigit():
+                            img_attrs.append(f'height="{height}"')
+                        figure_parts = ["<figure class=\"solarren-image\">"]
+                        figure_parts.append(f"<img {' '.join(img_attrs)} />")
+                        caption_text = alt or title or ""
+                        if caption_text:
+                            figure_parts.append(f"<figcaption>{escape(caption_text)}</figcaption>")
+                        figure_parts.append("<div class=\"solarren-download\">")
+                        figure_parts.append(
+                            f"<a class=\"solarren-download-link\" href=\"{safe_src}\" download>Download image</a>"
+                        )
+                        figure_parts.append("</div>")
+                        figure_parts.append("</figure>")
+                        parts.extend(part for part in figure_parts if isinstance(part, str))
+                        last_was_break = True
+                    elif kind == "download":
+                        _, prefix, content, href, filename = segment
+                        chunk = (prefix or "") + content
+                        chunk = chunk.strip()
+                        if not chunk:
+                            continue
+                        if not last_was_break:
+                            parts.append(" ")
+                        if href:
+                            safe_href = escape(href, quote=True)
+                            if filename:
+                                safe_name = escape(filename, quote=True)
+                                download_attr = f' download="{safe_name}"'
+                            else:
+                                download_attr = " download"
+                            parts.append(
+                                f'<a class="solarren-download-link" href="{safe_href}"{download_attr}>{escape(chunk)}</a>'
+                            )
+                        else:
+                            parts.append(escape(chunk))
+                        last_was_break = False
                     else:
                         _, prefix, content, href = segment
                         chunk = (prefix or "") + content
@@ -657,15 +896,9 @@ class SolarRenBackend:
                         last_was_break = False
 
                 parts.append("</div>")
-                html_output = "".join(parts)
+                html_output = "".join(part for part in parts if isinstance(part, str))
                 html_output = re.sub(r"(<br/>\s*){3,}", "<br/><br/>", html_output)
                 return html_output
-                body = " ".join(self._chunks)
-                body = re.sub(r"\s+\n", "\n", body)
-                body = re.sub(r"\n\s+", "\n", body)
-                body = re.sub(r"\n{3,}", "\n\n", body)
-                body = re.sub(r"\s{2,}", " ", body)
-                return body.strip()
 
         class SolarRenView(QtWidgets.QWidget):
             titleChanged = QtCore.pyqtSignal(str)
@@ -689,9 +922,6 @@ class SolarRenBackend:
                 self._viewer.anchorClicked.connect(self.load)
                 self._viewer.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
                 self._viewer.setAcceptRichText(True)
-                self._viewer = QtWidgets.QPlainTextEdit()
-                self._viewer.setReadOnly(True)
-                self._viewer.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.WidgetWidth)
                 layout.addWidget(self._status)
                 layout.addWidget(self._viewer, 1)
 
@@ -767,12 +997,93 @@ class SolarRenBackend:
 
                     .solarren-control {{
                         margin: 8px 0;
-                        padding: 8px 10px;
+                        padding: 10px 12px;
                         border: 1px solid {qcolor_to_css(muted)};
-                        border-radius: 6px;
+                        border-radius: 8px;
                         font-size: 12px;
                         font-family: "JetBrains Mono", "Fira Code", "Source Code Pro", monospace;
-                        background-color: {qcolor_to_css(base.lighter(110))};
+                        background-color: {qcolor_to_css(base.lighter(112))};
+                        display: flex;
+                        flex-direction: column;
+                        gap: 6px;
+                    }}
+
+                    .solarren-control-title {{
+                        font-weight: 600;
+                        font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+                        letter-spacing: 0.02em;
+                    }}
+
+                    .solarren-control-meta {{
+                        display: flex;
+                        flex-direction: column;
+                        gap: 4px;
+                    }}
+
+                    .solarren-control-row {{
+                        display: flex;
+                        gap: 6px;
+                        flex-wrap: wrap;
+                        align-items: baseline;
+                    }}
+
+                    .solarren-control-key {{
+                        font-size: 10px;
+                        font-weight: 600;
+                        text-transform: uppercase;
+                        letter-spacing: 0.08em;
+                        color: {qcolor_to_css(muted)};
+                    }}
+
+                    .solarren-control-value {{
+                        font-family: "JetBrains Mono", "Fira Code", "Source Code Pro", monospace;
+                    }}
+
+                    .solarren-image {{
+                        margin: 16px 0;
+                        padding: 12px;
+                        border: 1px solid {qcolor_to_css(muted)};
+                        border-radius: 10px;
+                        background-color: {qcolor_to_css(base.lighter(108))};
+                        text-align: center;
+                    }}
+
+                    .solarren-image img {{
+                        max-width: 100%;
+                        border-radius: 8px;
+                    }}
+
+                    .solarren-image figcaption {{
+                        margin-top: 8px;
+                        font-size: 12px;
+                        color: {qcolor_to_css(muted)};
+                    }}
+
+                    .solarren-download {{
+                        margin-top: 10px;
+                    }}
+
+                    .solarren-download-link {{
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 6px;
+                        padding: 6px 12px;
+                        border-radius: 6px;
+                        border: 1px solid {qcolor_to_css(muted)};
+                        background-color: {qcolor_to_css(base.lighter(120))};
+                        color: {qcolor_to_css(text)};
+                        text-decoration: none;
+                        font-size: 12px;
+                        transition: background-color 0.2s ease;
+                    }}
+
+                    .solarren-download-link::before {{
+                        content: "\2193";
+                        font-size: 14px;
+                    }}
+
+                    .solarren-download-link:hover {{
+                        background-color: {qcolor_to_css(base.lighter(140))};
                     }}
                     """
                 ).strip()
@@ -797,13 +1108,6 @@ class SolarRenBackend:
                     "</div></body></html>"
                 )
 
-            def _apply_content(self, url_str: str, title: str, text: str, success: bool):
-                self._url = QtCore.QUrl(url_str)
-                self._status.setText(f"SolarRen → {url_str}")
-                self._viewer.setPlainText(text)
-                self.titleChanged.emit(title)
-                self.loadFinished.emit(success)
-
             def load(self, url):
                 if isinstance(url, QtCore.QUrl):
                     qurl = QtCore.QUrl(url)
@@ -821,12 +1125,6 @@ class SolarRenBackend:
                 loading_html = "<div class=\"solarren-document\">Loading…</div>"
                 self._viewer.document().setBaseUrl(qurl)
                 self._viewer.setHtml(self._wrap_document(qurl.toString(), "Loading…", loading_html))
-                    self._contentReady.emit(qurl.toString(), "about:blank", "SolarRen ready.", True)
-                    return
-
-                self._status.setText(f"Loading {qurl.toString()} …")
-                self._viewer.setPlainText("")
-                self.loadFinished.emit(False)
 
                 def worker(target_url: QtCore.QUrl):
                     url_str = target_url.toString()
@@ -865,32 +1163,12 @@ class SolarRenBackend:
                             "</div>"
                         )
                         self._contentReady.emit(url_str, url_str, error_html, False)
-                        extractor = TextExtractor()
-                        extractor.feed(html_text)
-                        body = extractor.get_text() or "[No textual content rendered]"
-
-                        header = page_title + "\n" + ("=" * len(page_title)) + "\n\n"
-                        display_text = header + body
-                        self._contentReady.emit(url_str, page_title, display_text, True)
-                    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError) as exc:
-                        self._contentReady.emit(
-                            url_str,
-                            url_str,
-                            f"SolarRen failed to load {url_str}:\n{exc}",
-                            False,
-                        )
-                    except Exception as exc:
-                        self._contentReady.emit(
-                            url_str,
-                            url_str,
-                            f"SolarRen failed to load {url_str}:\n{exc}",
-                            False,
-                        )
 
                 self._thread = threading.Thread(target=worker, args=(qurl,), daemon=True)
                 self._thread.start()
 
         return SolarRenView(core, user_agent or self._default_agent)
+
 
 class MinimalBackend:
     def __init__(self):
