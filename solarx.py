@@ -16,7 +16,12 @@ def main():
     ap.add_argument("--ua", help="Custom User-Agent")
     ap.add_argument("--profile", default="Default", help="Profile name (ignored if --incognito)")
     ap.add_argument("--incognito", action="store_true", help="Incognito (no disk cache/cookies)")
-    ap.add_argument("--renderer", choices=["qtweb", "minimal"], default="qtweb", help="Choose renderer backend")
+    ap.add_argument(
+        "--renderer",
+        choices=["qtweb", "solarren", "minimal"],
+        default="qtweb",
+        help="Choose renderer backend",
+    )
     args = ap.parse_args()
 
     core = SolarCore()
