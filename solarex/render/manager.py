@@ -38,6 +38,8 @@ class QtWebBackend:
             QWebEngineScript,
         )
         from PyQt6.QtWebEngineWidgets import QWebEngineView
+        from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEngineScript
+        from PyQt6.QtWebEngineWidgets import QWebEnginePage, QWebEngineView
 
         if core.profile.incognito:
             profile = QWebEngineProfile()
