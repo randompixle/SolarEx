@@ -662,7 +662,7 @@ class SolarRenBackend:
                         parts.append(" ")
                     parts.append(chunk)
 
-                text_output = "".join(parts).strip()
+                text_output = "".join(part for part in parts if isinstance(part, str)).strip()
                 text_output = re.sub(r"\n{3,}", "\n\n", text_output)
                 return text_output
 
@@ -720,7 +720,38 @@ class SolarRenBackend:
                         last_was_break = True
                     elif kind == "control":
                         info = segment[1]
-                        parts.append(self._control_html(info))
+                        rendered = self._control_html(info)
+                        if rendered:
+                            parts.append(rendered)
+                        last_was_break = True
+                    elif kind == "image":
+                        _, src, alt, title, width, height = segment
+                        if not src:
+                            continue
+                        if not last_was_break:
+                            parts.append("<br/><br/>")
+                        safe_src = escape(src, quote=True)
+                        img_attrs = [f'src="{safe_src}"']
+                        if alt:
+                            img_attrs.append(f'alt="{escape(alt)}"')
+                        elif title:
+                            img_attrs.append(f'alt="{escape(title)}"')
+                        if width and width.isdigit():
+                            img_attrs.append(f'width="{width}"')
+                        if height and height.isdigit():
+                            img_attrs.append(f'height="{height}"')
+                        figure_parts = ["<figure class=\"solarren-image\">"]
+                        figure_parts.append(f"<img {' '.join(img_attrs)} />")
+                        caption_text = alt or title or ""
+                        if caption_text:
+                            figure_parts.append(f"<figcaption>{escape(caption_text)}</figcaption>")
+                        figure_parts.append("<div class=\"solarren-download\">")
+                        figure_parts.append(
+                            f"<a class=\"solarren-download-link\" href=\"{safe_src}\" download>Download image</a>"
+                        )
+                        figure_parts.append("</div>")
+                        figure_parts.append("</figure>")
+                        parts.extend(part for part in figure_parts if isinstance(part, str))
                         last_was_break = True
                     elif kind == "image":
                         _, src, alt, title, width, height = segment
@@ -788,7 +819,7 @@ class SolarRenBackend:
                         last_was_break = False
 
                 parts.append("</div>")
-                html_output = "".join(parts)
+                html_output = "".join(part for part in parts if isinstance(part, str))
                 html_output = re.sub(r"(<br/>\s*){3,}", "<br/><br/>", html_output)
                 return html_output
 
