@@ -231,11 +231,24 @@ class SolarRenBackend:
                             self.outer._pre_depth += 1
                             return
 
+                        if tag == "img":
+                            attrs_dict = {k.lower(): v for k, v in attrs}
+                            self.outer._append_image(attrs_dict)
+                            return
+
                         if tag == "a":
                             attrs_dict = {k.lower(): v for k, v in attrs}
                             href = attrs_dict.get("href") or ""
                             resolved = urljoin(self.outer.base_url, href) if href else ""
-                            self.outer._anchor_stack.append(resolved)
+                            download_present = any(k.lower() == "download" for k, _ in attrs)
+                            download_name = attrs_dict.get("download") if download_present else None
+                            anchor_info = {
+                                "href": resolved,
+                                "download": "1" if download_present else "",
+                            }
+                            if download_name:
+                                anchor_info["download_name"] = download_name
+                            self.outer._anchor_stack.append(anchor_info)
                             return
 
                     def handle_endtag(self, tag):
@@ -294,8 +307,8 @@ class SolarRenBackend:
                         if self.outer._heading_level:
                             text = text.upper()
                         if self.outer._anchor_stack:
-                            href = self.outer._anchor_stack[-1]
-                            self.outer._append_link(text, href)
+                            anchor_info = self.outer._anchor_stack[-1]
+                            self.outer._append_link(text, anchor_info)
                         else:
                             self.outer._append_text(text)
 
@@ -307,7 +320,7 @@ class SolarRenBackend:
                 self._segments: list[tuple] = []
                 self._pending_prefix: Optional[str] = None
                 self._heading_level: Optional[str] = None
-                self._anchor_stack: list[str] = []
+                self._anchor_stack: list[dict[str, str]] = []
                 self._list_stack: list[dict] = []
                 self._pre_depth: int = 0
                 self._textarea_stack: list[int] = []
@@ -353,20 +366,39 @@ class SolarRenBackend:
                 prefix = self._consume_prefix()
                 self._segments.append(("text", prefix, cleaned.strip()))
 
-            def _append_link(self, text: str, href: str):
+            def _append_link(self, text: str, anchor_info: Dict[str, str]):
                 if self._pre_depth:
                     cleaned = text.replace("\r\n", "\n")
                     if not cleaned:
                         return
                     prefix = self._consume_prefix()
-                    self._segments.append(("link-pre", prefix, cleaned, href))
+                    self._segments.append(
+                        (
+                            "link-pre",
+                            prefix,
+                            cleaned,
+                            anchor_info.get("href", ""),
+                        )
+                    )
                     return
 
                 cleaned = re.sub(r"\s+", " ", text)
                 if not cleaned.strip():
                     return
                 prefix = self._consume_prefix()
-                self._segments.append(("link", prefix, cleaned.strip(), href))
+                href = anchor_info.get("href", "")
+                if anchor_info.get("download"):
+                    self._segments.append(
+                        (
+                            "download",
+                            prefix,
+                            cleaned.strip(),
+                            href,
+                            anchor_info.get("download_name", ""),
+                        )
+                    )
+                else:
+                    self._segments.append(("link", prefix, cleaned.strip(), href))
 
             def _append_form_control(self, info: Optional[Dict[str, str]]) -> int:
                 if not info:
@@ -375,6 +407,31 @@ class SolarRenBackend:
                 segment = ["control", info]
                 self._segments.append(segment)
                 return len(self._segments) - 1
+
+            def _append_image(self, attrs: Dict[str, Optional[str]]):
+                src = attrs.get("src") or attrs.get("data-src") or attrs.get("data-lazy-src") or ""
+                if not src and attrs.get("srcset"):
+                    srcset = attrs.get("srcset") or ""
+                    primary = srcset.split(",", 1)[0].strip().split(" ", 1)[0]
+                    src = primary
+                if not src:
+                    return
+                resolved = urljoin(self.base_url, src)
+                alt = attrs.get("alt") or attrs.get("aria-label") or ""
+                title = attrs.get("title") or ""
+                width = attrs.get("width") or ""
+                height = attrs.get("height") or ""
+                self._pending_prefix = None
+                self._segments.append(
+                    (
+                        "image",
+                        resolved,
+                        alt,
+                        title,
+                        width,
+                        height,
+                    )
+                )
 
             def _extend_textarea_value(self, text: str):
                 if not self._textarea_stack or not text:
@@ -555,6 +612,29 @@ class SolarRenBackend:
                         if parts and not parts[-1].endswith("\n"):
                             parts.append("\n")
                         chunk = self._control_text(info)
+                    elif kind == "image":
+                        _, src, alt, title, width, height = segment
+                        if parts and not parts[-1].endswith("\n"):
+                            parts.append("\n")
+                        details: list[str] = []
+                        if alt:
+                            details.append(f'alt="{self._clean_inline_value(alt)}"')
+                        elif title:
+                            details.append(f'title="{self._clean_inline_value(title)}"')
+                        if width and height:
+                            details.append(f"{width}×{height}")
+                        elif width or height:
+                            details.append(width or height)
+                        details.append(f'src="{self._clean_inline_value(src)}"')
+                        chunk = f"[image {' '.join(details)}]"
+                    elif kind == "download":
+                        _, prefix, content, href, filename = segment
+                        label = (prefix or "") + content
+                        target = filename or href
+                        if target:
+                            chunk = f"{label} [download {self._clean_inline_value(target)}]"
+                        else:
+                            chunk = label
                     else:
                         _, prefix, content, href = segment
                         if href:
@@ -628,6 +708,56 @@ class SolarRenBackend:
                         info = segment[1]
                         parts.append(self._control_html(info))
                         last_was_break = True
+                    elif kind == "image":
+                        _, src, alt, title, width, height = segment
+                        if not src:
+                            continue
+                        if not last_was_break:
+                            parts.append("<br/><br/>")
+                        safe_src = escape(src, quote=True)
+                        img_attrs = [f'src="{safe_src}"']
+                        if alt:
+                            img_attrs.append(f'alt="{escape(alt)}"')
+                        elif title:
+                            img_attrs.append(f'alt="{escape(title)}"')
+                        if width and width.isdigit():
+                            img_attrs.append(f'width="{width}"')
+                        if height and height.isdigit():
+                            img_attrs.append(f'height="{height}"')
+                        figure_parts = ["<figure class=\"solarren-image\">"]
+                        figure_parts.append(f"<img {' '.join(img_attrs)} />")
+                        caption_text = alt or title or ""
+                        if caption_text:
+                            figure_parts.append(f"<figcaption>{escape(caption_text)}</figcaption>")
+                        figure_parts.append("<div class=\"solarren-download\">")
+                        figure_parts.append(
+                            f"<a class=\"solarren-download-link\" href=\"{safe_src}\" download>Download image</a>"
+                        )
+                        figure_parts.append("</div>")
+                        figure_parts.append("</figure>")
+                        parts.extend(figure_parts)
+                        last_was_break = True
+                    elif kind == "download":
+                        _, prefix, content, href, filename = segment
+                        chunk = (prefix or "") + content
+                        chunk = chunk.strip()
+                        if not chunk:
+                            continue
+                        if not last_was_break:
+                            parts.append(" ")
+                        if href:
+                            safe_href = escape(href, quote=True)
+                            if filename:
+                                safe_name = escape(filename, quote=True)
+                                download_attr = f' download="{safe_name}"'
+                            else:
+                                download_attr = " download"
+                            parts.append(
+                                f'<a class="solarren-download-link" href="{safe_href}"{download_attr}>{escape(chunk)}</a>'
+                            )
+                        else:
+                            parts.append(escape(chunk))
+                        last_was_break = False
                     else:
                         _, prefix, content, href = segment
                         chunk = (prefix or "") + content
@@ -751,6 +881,53 @@ class SolarRenBackend:
                         font-size: 12px;
                         font-family: "JetBrains Mono", "Fira Code", "Source Code Pro", monospace;
                         background-color: {qcolor_to_css(base.lighter(110))};
+                    }}
+
+                    .solarren-image {{
+                        margin: 16px 0;
+                        padding: 12px;
+                        border: 1px solid {qcolor_to_css(muted)};
+                        border-radius: 10px;
+                        background-color: {qcolor_to_css(base.lighter(108))};
+                        text-align: center;
+                    }}
+
+                    .solarren-image img {{
+                        max-width: 100%;
+                        border-radius: 8px;
+                    }}
+
+                    .solarren-image figcaption {{
+                        margin-top: 8px;
+                        font-size: 12px;
+                        color: {qcolor_to_css(muted)};
+                    }}
+
+                    .solarren-download {{
+                        margin-top: 10px;
+                    }}
+
+                    .solarren-download-link {{
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 6px;
+                        padding: 6px 12px;
+                        border-radius: 6px;
+                        border: 1px solid {qcolor_to_css(muted)};
+                        background-color: {qcolor_to_css(base.lighter(120))};
+                        color: {qcolor_to_css(text)};
+                        text-decoration: none;
+                        font-size: 12px;
+                        transition: background-color 0.2s ease;
+                    }}
+
+                    .solarren-download-link::before {{
+                        content: "\2193";
+                        font-size: 14px;
+                    }}
+
+                    .solarren-download-link:hover {{
+                        background-color: {qcolor_to_css(base.lighter(140))};
                     }}
                     """
                 ).strip()
