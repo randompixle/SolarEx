@@ -32,14 +32,25 @@ class RenderManager:
 class QtWebBackend:
     def __init__(self): pass
     def new_view(self, core, user_agent: str = None):
-        from PyQt6.QtWebEngineCore import (
-            QWebEnginePage,
-            QWebEngineProfile,
-            QWebEngineScript,
-        )
-        from PyQt6.QtWebEngineWidgets import QWebEngineView
-        from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEngineScript
-        from PyQt6.QtWebEngineWidgets import QWebEnginePage, QWebEngineView
+        try:
+            from PyQt6.QtWebEngineCore import (
+                QWebEnginePage,
+                QWebEngineProfile,
+                QWebEngineScript,
+            )
+        except ImportError:
+            # Older PyQt6 releases shipped these APIs from QtWebEngineWidgets
+            from PyQt6.QtWebEngineWidgets import (  # type: ignore
+                QWebEnginePage,
+                QWebEngineProfile,
+                QWebEngineScript,
+            )
+
+        try:
+            from PyQt6.QtWebEngineWidgets import QWebEngineView
+        except ImportError:
+            # Newer distributions keep the view class in QtWebEngineCore
+            from PyQt6.QtWebEngineCore import QWebEngineView  # type: ignore
 
         if core.profile.incognito:
             profile = QWebEngineProfile()
