@@ -32,6 +32,12 @@ class RenderManager:
 class QtWebBackend:
     def __init__(self): pass
     def new_view(self, core, user_agent: str = None):
+        from PyQt6.QtWebEngineCore import (
+            QWebEnginePage,
+            QWebEngineProfile,
+            QWebEngineScript,
+        )
+        from PyQt6.QtWebEngineWidgets import QWebEngineView
         from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEngineScript
         from PyQt6.QtWebEngineWidgets import QWebEnginePage, QWebEngineView
 
