@@ -203,21 +203,24 @@ class SolarRenBackend:
                         if tag == "input":
                             attrs_dict = {k.lower(): v for k, v in attrs}
                             control_info = self.outer._make_input_control(attrs_dict)
-                            self.outer._append_form_control(control_info)
+                            if control_info:
+                                self.outer._append_form_control(control_info)
                             return
 
                         if tag == "textarea":
                             attrs_dict = {k.lower(): v for k, v in attrs}
                             control_info = self.outer._make_textarea_control(attrs_dict)
                             index = self.outer._append_form_control(control_info)
-                            self.outer._textarea_stack.append(index)
+                            if index >= 0:
+                                self.outer._textarea_stack.append(index)
                             return
 
                         if tag == "button":
                             attrs_dict = {k.lower(): v for k, v in attrs}
                             control_info = self.outer._make_button_control(attrs_dict)
                             index = self.outer._append_form_control(control_info)
-                            self.outer._button_stack.append(index)
+                            if index >= 0:
+                                self.outer._button_stack.append(index)
                             return
 
                         if tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
@@ -365,7 +368,9 @@ class SolarRenBackend:
                 prefix = self._consume_prefix()
                 self._segments.append(("link", prefix, cleaned.strip(), href))
 
-            def _append_form_control(self, info: Dict[str, str]) -> int:
+            def _append_form_control(self, info: Optional[Dict[str, str]]) -> int:
+                if not info:
+                    return -1
                 self._pending_prefix = None
                 segment = ["control", info]
                 self._segments.append(segment)
@@ -414,8 +419,10 @@ class SolarRenBackend:
                         if not info.get("label"):
                             info["label"] = trimmed
 
-            def _make_input_control(self, attrs: Dict[str, str]) -> Dict[str, str]:
+            def _make_input_control(self, attrs: Dict[str, str]) -> Optional[Dict[str, str]]:
                 control_type = (attrs.get("type") or "text").lower()
+                if control_type == "hidden":
+                    return None
                 label = attrs.get("aria-label") or attrs.get("title") or ""
                 placeholder = attrs.get("placeholder") or label
                 return {
