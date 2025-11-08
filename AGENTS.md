@@ -19,6 +19,7 @@ Goal: make SolarEx **stable, modular, and runnable with `python solarx.py`**.
 7. Add cleanup to remove `__pycache__` and `.pyc` files on shutdown.
 8. Don’t add unnecessary dependencies — stick to PyQt6, httpx, and BeautifulSoup.
 9. Make sure window creation and plugin hooks (`core.emit_window_created(win)`) all succeed without crashing.
+10. Make solarRen render google properly
 
 ### Expected output behavior:
 When running:
