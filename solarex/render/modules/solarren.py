@@ -1,6 +1,7 @@
 from PyQt6 import QtWidgets, QtCore, QtGui
 from bs4 import BeautifulSoup
-import httpx, os, base64, urllib.parse, re
+from html import escape
+import httpx, os, base64, urllib.parse, re, textwrap
 
 metadata = {
     "id": "solarren",
@@ -50,16 +51,20 @@ def _inject_supported_styles(tag, style_dict):
 
 # ---------------- async fetcher ----------------
 
+DEFAULT_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) SolarEx/4.2"
+
+
 class FetchWorker(QtCore.QThread):
     chunk = QtCore.pyqtSignal(int)          # percent
     done  = QtCore.pyqtSignal(str, str)     # html, url
     error = QtCore.pyqtSignal(str)
 
-    def __init__(self, url, backend, timeout=20.0):
+    def __init__(self, url, backend, timeout=20.0, user_agent: str | None = None):
         super().__init__()
         self.url = url
         self.backend = backend
         self.timeout = timeout
+        self.user_agent = user_agent or DEFAULT_USER_AGENT
 
     def run(self):
         try:
@@ -72,7 +77,11 @@ class FetchWorker(QtCore.QThread):
                 html = getattr(resp, "text", None) or resp.content.decode("utf-8", "ignore")
                 self.done.emit(html, self.url); return
 
-            client = httpx.Client(follow_redirects=True, timeout=self.timeout)
+            client = httpx.Client(
+                follow_redirects=True,
+                timeout=self.timeout,
+                headers={"User-Agent": self.user_agent},
+            )
             r = client.stream("GET", self.url)
             total = int(r.headers.get("content-length") or 0)
             buf = bytearray()
@@ -107,10 +116,16 @@ class SolarRenView(QtWidgets.QScrollArea):
         self.core = core
         self.setWidgetResizable(True)
 
+        self.user_agent = getattr(getattr(core, "args", None), "ua", None) or DEFAULT_USER_AGENT
+
         self.canvas = QtWidgets.QTextBrowser()
         self.setWidget(self.canvas)
 
-        self.client = httpx.Client(follow_redirects=True, timeout=20.0)
+        self.client = httpx.Client(
+            follow_redirects=True,
+            timeout=20.0,
+            headers={"User-Agent": self.user_agent},
+        )
         self.cache_dir = os.path.join(core.profile.storage_path, "cache", "images")
         os.makedirs(self.cache_dir, exist_ok=True)
 
@@ -276,6 +291,8 @@ class SolarRenView(QtWidgets.QScrollArea):
         url = qurl.toString()
         if url.startswith("solarren://form_submit"):
             self._handle_form_submit(url); return
+        if url.startswith("solarren://google_search"):
+            self._handle_google_search(url); return
         self.load(url)
 
     # ---- public ----
@@ -286,7 +303,7 @@ class SolarRenView(QtWidgets.QScrollArea):
         self._show_status(f"Loading {url}")
 
         backend = getattr(self.core, "net", None) or self.core.require("net")
-        self._worker = FetchWorker(url, backend)
+        self._worker = FetchWorker(url, backend, user_agent=self.user_agent)
         self._worker.chunk.connect(lambda p: self._show_status(f"Downloading… {p}%"))
         self._worker.done.connect(lambda html, u: self._render(u, html))
         self._worker.error.connect(lambda msg: self.canvas.setPlainText(f"[SolarRen] fetch failed: {msg}"))
@@ -304,6 +321,9 @@ class SolarRenView(QtWidgets.QScrollArea):
         win = self.window()
         if isinstance(win, QtWidgets.QMainWindow): win.setWindowTitle(f"SolarEx - {title}")
         self._set_favicon(base_url, soup)
+
+        if self._render_google_if_applicable(base_url, soup, title):
+            return
 
         # Inline styles pass-through (subset)
         for tag in soup.find_all(True):
@@ -327,18 +347,65 @@ class SolarRenView(QtWidgets.QScrollArea):
 
         # Theme
         dark = self.core.settings.get_ns("renderer.solarren", "dark", True)
-        css = (
-            "<style>"
-            "body{background:#111;color:#ccc;font-family:sans-serif;}"
-            "a{color:#6af;text-decoration:none;} a:hover{color:#9df;text-decoration:underline;}"
-            "table{border-collapse:collapse;} img{max-width:100%;}"
-            "input,textarea{background:#222;color:#ddd;border:1px solid #555;padding:2px 4px;}"
-            "</style>"
-            if dark else ""
+        stylesheet = self._build_stylesheet(dark)
+
+        parsed = urllib.parse.urlparse(base_url)
+        protocol_display = f"{parsed.scheme}://" if parsed.scheme else ""
+        host_display = parsed.hostname or parsed.netloc or base_url
+        path_parts = parsed.path or ""
+        if parsed.params:
+            path_parts += f";{parsed.params}"
+        if parsed.query:
+            path_parts += f"?{parsed.query}"
+        if parsed.fragment:
+            path_parts += f"#{parsed.fragment}"
+
+        safe_protocol = escape(protocol_display)
+        safe_host = escape(host_display)
+        safe_path = escape(path_parts)
+        safe_url = escape(base_url)
+        safe_title = escape(title)
+
+        location_html = (
+            "<div class=\"solarren-location\">"
+            f"<span class=\"solarren-location-protocol\">{safe_protocol}</span>"
+            f"<span class=\"solarren-location-host\">{safe_host}</span>"
+            f"<span class=\"solarren-location-path\">{safe_path}</span>"
+            "</div>"
+        )
+        toolbar_html = (
+            "<div class=\"solarren-toolbar\">"
+            f"{location_html}"
+            f"<a class=\"solarren-open\" href=\"{safe_url}\" target=\"_blank\">Open original</a>"
+            "</div>"
         )
 
-        body = soup.body or soup
-        self.canvas.setHtml(css + str(body))
+        header_html = (
+            "<div class=\"solarren-header\">"
+            f"<h1>{safe_title}</h1>"
+            f"<div class=\"solarren-url\">{safe_url}</div>"
+            "</div>"
+        )
+
+        body_node = soup.body or soup
+        if getattr(body_node, "name", "").lower() == "body":
+            body_fragment = "".join(str(child) for child in body_node.children)
+        else:
+            body_fragment = str(body_node)
+
+        document_html = f'<div class="solarren-document">{body_fragment}</div>'
+
+        html_output = (
+            "<html><head><meta charset=\"utf-8\"/>"
+            f"<style>{stylesheet}</style>"
+            "</head><body>"
+            "<div class=\"solarren-wrapper\">"
+            f"{toolbar_html}<div class=\"solarren-surface\">{header_html}<div class=\"solarren-content\">{document_html}</div></div>"
+            "</div>"
+            "</body></html>"
+        )
+
+        self.canvas.setHtml(html_output)
         self.canvas.document().setBaseUrl(QtCore.QUrl(base_url))
         self._last_soup = soup
         self._show_status("Done")
@@ -363,6 +430,247 @@ class SolarRenView(QtWidgets.QScrollArea):
         for i in range(1,7):
             for h in soup.find_all(f"h{i}"):
                 h["style"] = (h.get("style","")+f";color:#fff;margin:6px 0;font-size:{24 - i*2}px;").strip(";")
+
+    def _render_google_if_applicable(self, base_url, soup, title):
+        parsed = urllib.parse.urlparse(base_url)
+        host = (parsed.hostname or parsed.netloc or "").lower()
+        if not host.startswith("www.google."):
+            return False
+
+        search_form = soup.find("form")
+        query_input = search_form.find("input", attrs={"name": "q"}) if search_form else None
+        query_value = query_input.get("value", "") if query_input else ""
+        action = _abs(base_url, search_form.get("action") if search_form else "https://www.google.com/search")
+
+        results = []
+        for res in soup.select("div#search div.g"):
+            link = res.find("a", href=True)
+            title_tag = res.find("h3")
+            if not link or not title_tag:
+                continue
+            href = self._google_clean_link(_abs(base_url, link["href"]))
+            snippet = ""
+            snippet_tag = res.select_one("div.IsZvec") or res.select_one("div.VwiC3b") or res.select_one("span.aCOpRe")
+            if snippet_tag:
+                snippet = snippet_tag.get_text(" ", strip=True)
+            else:
+                snippet = res.get_text(" ", strip=True)
+            results.append({
+                "title": title_tag.get_text(" ", strip=True),
+                "href": href,
+                "display": urllib.parse.urlparse(href).netloc or href,
+                "snippet": snippet,
+            })
+
+        cards = []
+        for card in results:
+            safe_title = escape(card["title"])
+            safe_href = escape(card["href"])
+            safe_display = escape(card["display"])
+            safe_snippet = escape(card["snippet"])
+            cards.append(
+                "<div class=\"solarren-result\">"
+                f"<a class=\"solarren-result-title\" href=\"{safe_href}\">{safe_title}</a>"
+                f"<div class=\"solarren-result-link\">{safe_display}</div>"
+                f"<div class=\"solarren-result-snippet\">{safe_snippet}</div>"
+                "</div>"
+            )
+
+        safe_query = escape(query_value)
+        safe_title = escape(title)
+        safe_url = escape(base_url)
+        action_encoded = urllib.parse.quote(action, safe="")
+        query_encoded = urllib.parse.quote(query_value, safe="")
+
+        stylesheet = self._build_stylesheet(self.core.settings.get_ns("renderer.solarren", "dark", True))
+        display_query = safe_query or "—"
+        results_html = ''.join(cards) if cards else '<div class="solarren-empty">No results.</div>'
+        search_link = f"solarren://google_search?action={action_encoded}&q={query_encoded}"
+        html_output = (
+            "<html><head><meta charset=\"utf-8\"/>"
+            f"<style>{stylesheet}</style>"
+            "</head><body>"
+            "<div class=\"solarren-wrapper\">"
+            "<div class=\"solarren-toolbar\">"
+            f"<div class=\"solarren-location\"><span class=\"solarren-location-host\">Google</span></div>"
+            f"<a class=\"solarren-open\" href=\"{safe_url}\" target=\"_blank\">Open original</a>"
+            "</div>"
+            "<div class=\"solarren-surface\">"
+            f"<div class=\"solarren-header\"><h1>{safe_title}</h1></div>"
+            "<div class=\"solarren-google-search\">"
+            f"<div class=\"solarren-google-query\">Query: {display_query}</div>"
+            f"<a class=\"solarren-google-button\" href=\"{search_link}\">New search…</a>"
+            "</div>"
+            f"<div class=\"solarren-google-results\">{results_html}</div>"
+            "</div>"
+            "</div>"
+            "</body></html>"
+        )
+
+        self.canvas.setHtml(html_output)
+        self.canvas.document().setBaseUrl(QtCore.QUrl(base_url))
+        self._last_soup = soup
+        self._show_status("Google results ready")
+        return True
+
+    def _build_stylesheet(self, dark: bool) -> str:
+        bg = "#0f111a" if dark else "#f5f6fa"
+        fg = "#d5d9e2" if dark else "#1f2530"
+        accent = "#4fa3ff" if dark else "#0a59c9"
+        muted = "#5a6074" if dark else "#6f778b"
+        surface = "#161a2b" if dark else "#ffffff"
+        secondary_surface = "#1d2237" if dark else "#f0f3fb"
+        code_bg = "#0f1220" if dark else "#f1f3f8"
+        gradient_end = "#05060a" if dark else "#e4e7ef"
+
+        return textwrap.dedent(
+            f"""
+            :root {{ color-scheme: {'dark' if dark else 'light'}; }}
+            body {{
+                margin: 0;
+                padding: 32px;
+                background: radial-gradient(circle at top, {bg} 0%, {bg} 45%, {gradient_end} 100%);
+                color: {fg};
+                font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+                display: flex;
+                justify-content: center;
+            }}
+            a {{ color: {accent}; }}
+            a:hover {{ color: {accent}; text-decoration: underline; }}
+            .solarren-wrapper {{ width: 100%; max-width: 960px; }}
+            .solarren-toolbar {{
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                padding: 12px 16px;
+                border-radius: 12px;
+                background: {surface};
+                border: 1px solid {muted};
+                box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+                margin-bottom: 20px;
+            }}
+            .solarren-location {{
+                flex: 1;
+                font-family: 'JetBrains Mono', 'Fira Code', monospace;
+                font-size: 12px;
+                display: flex;
+                gap: 4px;
+                overflow: hidden;
+                white-space: nowrap;
+                text-overflow: ellipsis;
+            }}
+            .solarren-location span {{ overflow: hidden; text-overflow: ellipsis; }}
+            .solarren-location-protocol {{ opacity: 0.6; }}
+            .solarren-location-host {{ font-weight: 600; }}
+            .solarren-location-path {{ opacity: 0.7; }}
+            .solarren-open {{
+                padding: 8px 14px;
+                border-radius: 8px;
+                border: 1px solid {accent};
+                text-decoration: none;
+                color: {accent};
+            }}
+            .solarren-open:hover {{ background: {accent}; color: {bg}; }}
+            .solarren-surface {{
+                background: {surface};
+                border-radius: 16px;
+                border: 1px solid {muted};
+                box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+                padding: 28px;
+            }}
+            .solarren-header h1 {{ margin: 0 0 6px 0; font-size: 22px; }}
+            .solarren-url {{ font-size: 12px; color: {muted}; }}
+            .solarren-content {{ margin-top: 20px; }}
+            .solarren-document {{
+                line-height: 1.65;
+                font-size: 14px;
+            }}
+            .solarren-document pre {{
+                background: {code_bg};
+                border-radius: 8px;
+                padding: 12px;
+                overflow-x: auto;
+            }}
+            .solarren-document img {{ max-width: 100%; height: auto; }}
+            .solarren-document table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin: 10px 0;
+            }}
+            .solarren-document th,
+            .solarren-document td {{
+                border: 1px solid {muted};
+                padding: 6px 8px;
+            }}
+            .solarren-control {{
+                margin: 12px 0;
+                padding: 12px;
+                border-radius: 8px;
+                border: 1px dashed {muted};
+                font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            }}
+            .solarren-google-search {{
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 12px;
+                padding: 12px 16px;
+                border-radius: 12px;
+                background: {secondary_surface};
+                margin-bottom: 20px;
+            }}
+            .solarren-google-query {{ font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 13px; }}
+            .solarren-google-button {{
+                padding: 8px 16px;
+                border-radius: 8px;
+                border: 1px solid {accent};
+                text-decoration: none;
+                color: {accent};
+                font-weight: 600;
+            }}
+            .solarren-google-button:hover {{ background: {accent}; color: {bg}; }}
+            .solarren-google-results {{ display: flex; flex-direction: column; gap: 18px; }}
+            .solarren-result {{
+                padding: 16px;
+                border-radius: 12px;
+                background: {surface};
+                border: 1px solid {muted};
+                box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
+            }}
+            .solarren-result-title {{ font-size: 18px; font-weight: 600; }}
+            .solarren-result-link {{ font-size: 12px; color: {muted}; margin-top: 4px; }}
+            .solarren-result-snippet {{ margin-top: 10px; line-height: 1.55; font-size: 13px; }}
+            .solarren-empty {{ font-style: italic; color: {muted}; }}
+            """
+        ).strip()
+
+    def _google_clean_link(self, href: str) -> str:
+        try:
+            parsed = urllib.parse.urlparse(href)
+            if parsed.path == "/url" and parsed.query:
+                params = urllib.parse.parse_qs(parsed.query)
+                if "q" in params:
+                    return params["q"][0]
+                if "url" in params:
+                    return params["url"][0]
+            return href
+        except Exception:
+            return href
+
+    def _handle_google_search(self, url: str):
+        parsed = urllib.parse.urlparse(url)
+        qs = dict(urllib.parse.parse_qsl(parsed.query))
+        action = urllib.parse.unquote(qs.get("action", "https://www.google.com/search"))
+        preset = urllib.parse.unquote(qs.get("q", ""))
+
+        text, ok = QtWidgets.QInputDialog.getText(self, "Google search", "Query:", text=preset)
+        if not ok:
+            return
+        query = text.strip()
+        if not query:
+            return
+        sep = "&" if urllib.parse.urlparse(action).query else "?"
+        self.load(f"{action}{sep}q={urllib.parse.quote(query)}")
 
 def new_view(core, *a, **kw):
     return SolarRenView(core)

@@ -1,4 +1,7 @@
-import importlib.util, json, sys
+import importlib.util
+import json
+import sys
+import traceback
 from pathlib import Path
 
 class Plugin:
@@ -30,11 +33,16 @@ class PluginManager:
             main_py = pl.path / pl.entry
             try:
                 spec = importlib.util.spec_from_file_location(pl.name, main_py)
+                if not spec or not spec.loader:
+                    raise ImportError(f"Unable to load spec from {main_py}")
                 mod = importlib.util.module_from_spec(spec)
                 sys.modules[pl.name] = mod
                 spec.loader.exec_module(mod)
-                if hasattr(mod, "init"): mod.init(core)
+                init_fn = getattr(mod, "init", None)
+                if callable(init_fn):
+                    init_fn(core)
                 pl.module = mod
                 print(f"[SolarEx][plugin] Loaded {pl.name}")
             except Exception as e:
-                print(f"[SolarEx][plugin] Failed {pl.name}:", e)
+                print(f"[SolarEx][plugin] Failed {pl.name}: {e}")
+                traceback.print_exc()

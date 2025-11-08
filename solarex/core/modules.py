@@ -1,5 +1,7 @@
 from importlib import import_module
 from pathlib import Path
+import traceback
+
 from .registry import ModuleRegistry
 from .profiles import ProfileManager
 from .plugins import PluginManager
@@ -15,6 +17,7 @@ class SolarCore:
         self.ui_api = UIAPI(self)
         self.settings = Settings()
         self._window_created_listeners = []
+        self._shutdown_hooks = []
 
     def boot(self):
         print("[SolarEx] Booting modular web system…")
@@ -28,15 +31,47 @@ class SolarCore:
         print(f"[SolarEx] Using profile: {self.profile}")
 
     def load(self, dotted, as_name=None):
-        mod = import_module(dotted)
-        if hasattr(mod, "init"): mod.init(self)
-        self.registry.register(as_name or dotted.split('.')[-1], mod)
-        print(f"[SolarEx] Loaded module '{as_name or dotted.split('.')[-1]}' from '{dotted}'")
+        try:
+            mod = import_module(dotted)
+        except Exception as exc:
+            print(f"[SolarEx][modules] Failed to import '{dotted}': {exc}")
+            raise
 
-    def require(self, name): return self.registry.require(name)
+        init_fn = getattr(mod, "init", None)
+        if callable(init_fn):
+            try:
+                init_fn(self)
+            except Exception as exc:
+                print(f"[SolarEx][modules] init() failed for '{dotted}': {exc}")
+                traceback.print_exc()
+                raise
 
-    def on_window_created(self, fn): self._window_created_listeners.append(fn)
+        name = as_name or dotted.split('.')[-1]
+        self.registry.register(name, mod)
+        print(f"[SolarEx] Loaded module '{name}' from '{dotted}'")
+        return mod
+
+    def require(self, name):
+        return self.registry.require(name)
+
+    def on_window_created(self, fn):
+        self._window_created_listeners.append(fn)
+
     def emit_window_created(self, win):
         for fn in list(self._window_created_listeners):
-            try: fn(win)
-            except Exception as e: print("[SolarEx][event] window_created error:", e)
+            try:
+                fn(win)
+            except Exception as exc:
+                print("[SolarEx][event] window_created error:", exc)
+
+    def add_shutdown_hook(self, fn):
+        if callable(fn):
+            self._shutdown_hooks.append(fn)
+
+    def shutdown(self):
+        while self._shutdown_hooks:
+            hook = self._shutdown_hooks.pop()
+            try:
+                hook()
+            except Exception as exc:
+                print("[SolarEx][shutdown] hook error:", exc)
