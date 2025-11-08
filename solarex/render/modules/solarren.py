@@ -347,7 +347,99 @@ class SolarRenView(QtWidgets.QScrollArea):
 
         # Theme
         dark = self.core.settings.get_ns("renderer.solarren", "dark", True)
-        stylesheet = self._build_stylesheet(dark)
+        bg = "#0f111a" if dark else "#f5f6fa"
+        fg = "#d5d9e2" if dark else "#1f2530"
+        accent = "#4fa3ff" if dark else "#0a59c9"
+        muted = "#5a6074" if dark else "#6f778b"
+
+        stylesheet = textwrap.dedent(
+            f"""
+            :root {{ color-scheme: {'dark' if dark else 'light'}; }}
+            body {{
+                margin: 0;
+                padding: 32px;
+                background: radial-gradient(circle at top, {bg} 0%, {bg} 45%, {('#05060a' if dark else '#e4e7ef')} 100%);
+                color: {fg};
+                font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+                display: flex;
+                justify-content: center;
+            }}
+            a {{ color: {accent}; }}
+            a:hover {{ color: {accent}; text-decoration: underline; }}
+            .solarren-wrapper {{ width: 100%; max-width: 960px; }}
+            .solarren-toolbar {{
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                padding: 12px 16px;
+                border-radius: 12px;
+                background: {('#161a2b' if dark else '#ffffff')};
+                border: 1px solid {muted};
+                box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+                margin-bottom: 20px;
+            }}
+            .solarren-location {{
+                flex: 1;
+                font-family: 'JetBrains Mono', 'Fira Code', monospace;
+                font-size: 12px;
+                display: flex;
+                gap: 4px;
+                overflow: hidden;
+                white-space: nowrap;
+                text-overflow: ellipsis;
+            }}
+            .solarren-location span {{ overflow: hidden; text-overflow: ellipsis; }}
+            .solarren-location-protocol {{ opacity: 0.6; }}
+            .solarren-location-host {{ font-weight: 600; }}
+            .solarren-location-path {{ opacity: 0.7; }}
+            .solarren-open {{
+                padding: 8px 14px;
+                border-radius: 8px;
+                border: 1px solid {accent};
+                text-decoration: none;
+                color: {accent};
+            }}
+            .solarren-open:hover {{ background: {accent}; color: {bg}; }}
+            .solarren-surface {{
+                background: {('#161a2b' if dark else '#ffffff')};
+                border-radius: 16px;
+                border: 1px solid {muted};
+                box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+                padding: 28px;
+            }}
+            .solarren-header h1 {{ margin: 0 0 6px 0; font-size: 22px; }}
+            .solarren-url {{ font-size: 12px; color: {muted}; }}
+            .solarren-content {{ margin-top: 20px; }}
+            .solarren-document {{
+                line-height: 1.65;
+                font-size: 14px;
+            }}
+            .solarren-document pre {{
+                background: {('#0f1220' if dark else '#f1f3f8')};
+                border-radius: 8px;
+                padding: 12px;
+                overflow-x: auto;
+            }}
+            .solarren-document img {{ max-width: 100%; height: auto; }}
+            .solarren-document table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin: 10px 0;
+            }}
+            .solarren-document th,
+            .solarren-document td {{
+                border: 1px solid {muted};
+                padding: 6px 8px;
+            }}
+            .solarren-control {{
+                margin: 12px 0;
+                padding: 12px;
+                border-radius: 8px;
+                border: 1px dashed {muted};
+                font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            }}
+            """
+        ).strip()
 
         parsed = urllib.parse.urlparse(base_url)
         protocol_display = f"{parsed.scheme}://" if parsed.scheme else ""
